@@ -1,18 +1,28 @@
 import os
+from typing import Dict, List, Optional
+
 import redis
+
 from model.proxy import Proxy
 
 
 class RedisPool:
-    def __init__(self, host=None, port=None, db=0, table_name="use_proxy"):
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        db: int = 0,
+        table_name: str = "use_proxy",
+    ):
         host = host or os.environ.get("REDIS_HOST", "127.0.0.1")
         port = int(port or os.environ.get("REDIS_PORT", 6379))
-        self._redis = redis.Redis(host=host, port=port, db=db,
-                                  decode_responses=True)
-        self._table = table_name
-        self._table_https = f"{table_name}:https"   # 索引：支持https的
+        self._redis: redis.Redis = redis.Redis(
+            host=host, port=port, db=db, decode_responses=True
+        )
+        self._table: str = table_name
+        self._table_https: str = f"{table_name}:https"
 
-    def put(self, proxy):
+    def put(self, proxy: Proxy) -> None:
         """存一个代理，并同步维护各索引 set。"""
         self._redis.hset(self._table, proxy.proxy, proxy.to_json())
         if proxy.https:
@@ -20,10 +30,10 @@ class RedisPool:
         else:
             self._redis.srem(self._table_https, proxy.proxy)
 
-    def get(self, https=False):
+    def get(self, https: bool = False) -> Optional[Proxy]:
         """按需取一个代理（不删除）。"""
         if https:
-            members = self._redis.smembers(self._table_https)
+            members: set = self._redis.smembers(self._table_https)
         else:
             members = set(self._redis.hkeys(self._table))
         for pick in members:
@@ -32,19 +42,21 @@ class RedisPool:
                 return proxy
         return None
 
-    def delete(self, proxy):
+    def delete(self, proxy: Proxy) -> None:
         """删除一个代理（从所有索引同步移除）。"""
         self._redis.hdel(self._table, proxy.proxy)
         self._redis.srem(self._table_https, proxy.proxy)
 
-    def count(self):
-        return {"total": self._redis.hlen(self._table),
-                "https": self._redis.scard(self._table_https)}
+    def count(self) -> Dict[str, int]:
+        return {
+            "total": self._redis.hlen(self._table),
+            "https": self._redis.scard(self._table_https),
+        }
 
-    def getAll(self):
-        raw = self._redis.hgetall(self._table)
+    def getAll(self) -> List[Proxy]:
+        raw: Dict[str, str] = self._redis.hgetall(self._table)
         return [Proxy.create_from_json(v) for v in raw.values()]
 
-    def _get_proxy(self, proxy_str):
-        raw = self._redis.hget(self._table, proxy_str)
+    def _get_proxy(self, proxy_str: str) -> Optional[Proxy]:
+        raw: Optional[str] = self._redis.hget(self._table, proxy_str)
         return raw and Proxy.create_from_json(raw)
